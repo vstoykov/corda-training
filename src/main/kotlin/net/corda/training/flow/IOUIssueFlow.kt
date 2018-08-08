@@ -1,6 +1,9 @@
 package net.corda.training.flow
 
 import co.paralleluniverse.fibers.Suspendable
+import net.corda.core.contracts.Command
+import net.corda.core.contracts.StateAndContract
+import net.corda.core.contracts.TransactionState
 import net.corda.core.contracts.requireThat
 import net.corda.core.flows.CollectSignaturesFlow
 import net.corda.core.flows.FinalityFlow
@@ -12,6 +15,7 @@ import net.corda.core.flows.SignTransactionFlow
 import net.corda.core.flows.StartableByRPC
 import net.corda.core.transactions.SignedTransaction
 import net.corda.core.transactions.TransactionBuilder
+import net.corda.training.contract.IOUContract
 import net.corda.training.state.IOUState
 
 /**
@@ -25,10 +29,17 @@ import net.corda.training.state.IOUState
 class IOUIssueFlow(val state: IOUState) : FlowLogic<SignedTransaction>() {
     @Suspendable
     override fun call(): SignedTransaction {
-        // Placeholder code to avoid type error when running the tests. Remove before starting the flow task!
-        return serviceHub.signInitialTransaction(
-                TransactionBuilder(notary = null)
-        )
+        val notary = serviceHub.networkMapCache.notaryIdentities.first()
+        val txBuilder = TransactionBuilder(notary = notary)
+        val command = Command(IOUContract.Commands.Issue(), state.participants.map { it.owningKey })
+
+        txBuilder.withItems(command, StateAndContract(state, IOUContract.IOU_CONTRACT_ID))
+        txBuilder.verify(serviceHub)
+
+        val sessions = (state.participants - ourIdentity).map { initiateFlow(it) }
+        val tx = serviceHub.signInitialTransaction(txBuilder)
+        val stx = subFlow(CollectSignaturesFlow(tx, sessions))
+        return subFlow(FinalityFlow(stx))
     }
 }
 
